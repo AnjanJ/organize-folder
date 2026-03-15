@@ -1,0 +1,222 @@
+#!/bin/zsh
+setopt nullglob
+
+VERSION="1.0.0"
+
+# Organize any folder by file extension into subfolders.
+# Processes the target folder and every existing subdirectory independently.
+# Idempotent — safe to run multiple times. Skips files already in the correct category.
+#
+# Usage:
+#   organize-folder ~/Downloads                # organize
+#   organize-folder ~/Desktop --dry-run        # preview only
+#   organize-folder --help                     # show help
+#   organize-folder --version                  # show version
+
+# --- Parse arguments ---
+DRY_RUN=false
+TARGET=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --version) echo "organize-folder $VERSION"; exit 0 ;;
+    --help|-h)
+      echo "organize-folder $VERSION"
+      echo ""
+      echo "Organize any folder by sorting files into categorized subfolders."
+      echo ""
+      echo "Usage:"
+      echo "  organize-folder <folder-path>              organize the folder"
+      echo "  organize-folder <folder-path> --dry-run    preview without moving"
+      echo "  organize-folder --help                     show this help"
+      echo "  organize-folder --version                  show version"
+      echo ""
+      echo "Categories: images, docs, spreadsheets, presentations, archives,"
+      echo "  audio, video, code, installers, fonts, design, data, ebooks, logs, other"
+      echo ""
+      echo "Features:"
+      echo "  - Processes each subdirectory independently"
+      echo "  - Idempotent: safe to run multiple times"
+      echo "  - Handles filename collisions automatically"
+      echo "  - Skips hidden files and in-progress downloads"
+      exit 0
+      ;;
+    *)
+      if [[ -z "$TARGET" ]]; then
+        TARGET="$arg"
+      else
+        echo "Error: unexpected argument '$arg'"
+        echo "Run 'organize-folder --help' for usage."
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$TARGET" ]]; then
+  echo "Error: no folder specified."
+  echo "Run 'organize-folder --help' for usage."
+  exit 1
+fi
+
+# Resolve to absolute path and strip trailing slash
+TARGET="${TARGET:A}"
+TARGET="${TARGET%/}"
+
+if [[ ! -d "$TARGET" ]]; then
+  echo "Error: '$TARGET' is not a directory."
+  exit 1
+fi
+
+if $DRY_RUN; then
+  echo "DRY RUN — no files will be moved"
+  echo "Target: $TARGET"
+  echo ""
+fi
+
+# --- Extension to category mapping ---
+typeset -A FOLDER_MAP
+# Images
+FOLDER_MAP[jpg]=images FOLDER_MAP[jpeg]=images FOLDER_MAP[png]=images FOLDER_MAP[gif]=images FOLDER_MAP[svg]=images
+FOLDER_MAP[webp]=images FOLDER_MAP[ico]=images FOLDER_MAP[bmp]=images FOLDER_MAP[tiff]=images FOLDER_MAP[heic]=images
+# Documents
+FOLDER_MAP[pdf]=docs FOLDER_MAP[doc]=docs FOLDER_MAP[docx]=docs FOLDER_MAP[txt]=docs
+FOLDER_MAP[rtf]=docs FOLDER_MAP[odt]=docs FOLDER_MAP[pages]=docs
+# Spreadsheets
+FOLDER_MAP[xls]=spreadsheets FOLDER_MAP[xlsx]=spreadsheets FOLDER_MAP[csv]=spreadsheets
+FOLDER_MAP[numbers]=spreadsheets FOLDER_MAP[ods]=spreadsheets FOLDER_MAP[tsv]=spreadsheets
+# Presentations
+FOLDER_MAP[ppt]=presentations FOLDER_MAP[pptx]=presentations FOLDER_MAP[key]=presentations
+FOLDER_MAP[odp]=presentations
+# Archives
+FOLDER_MAP[zip]=archives FOLDER_MAP[tar]=archives FOLDER_MAP[gz]=archives FOLDER_MAP[bz2]=archives
+FOLDER_MAP[7z]=archives FOLDER_MAP[rar]=archives FOLDER_MAP[xz]=archives FOLDER_MAP[tgz]=archives
+# Audio
+FOLDER_MAP[mp3]=audio FOLDER_MAP[wav]=audio FOLDER_MAP[flac]=audio FOLDER_MAP[aac]=audio FOLDER_MAP[ogg]=audio
+FOLDER_MAP[m4a]=audio FOLDER_MAP[wma]=audio
+# Video
+FOLDER_MAP[mp4]=video FOLDER_MAP[mov]=video FOLDER_MAP[avi]=video FOLDER_MAP[mkv]=video FOLDER_MAP[wmv]=video
+FOLDER_MAP[webm]=video FOLDER_MAP[m4v]=video FOLDER_MAP[flv]=video
+# Code
+FOLDER_MAP[rb]=code FOLDER_MAP[py]=code FOLDER_MAP[js]=code FOLDER_MAP[ts]=code FOLDER_MAP[jsx]=code FOLDER_MAP[tsx]=code
+FOLDER_MAP[html]=code FOLDER_MAP[css]=code FOLDER_MAP[scss]=code FOLDER_MAP[json]=code FOLDER_MAP[yml]=code
+FOLDER_MAP[yaml]=code FOLDER_MAP[xml]=code FOLDER_MAP[sh]=code FOLDER_MAP[md]=code FOLDER_MAP[sql]=code
+FOLDER_MAP[rs]=code FOLDER_MAP[go]=code FOLDER_MAP[java]=code FOLDER_MAP[c]=code FOLDER_MAP[cpp]=code FOLDER_MAP[h]=code
+FOLDER_MAP[swift]=code FOLDER_MAP[kt]=code FOLDER_MAP[ex]=code FOLDER_MAP[exs]=code
+# Disk images & installers
+FOLDER_MAP[dmg]=installers FOLDER_MAP[pkg]=installers FOLDER_MAP[app]=installers FOLDER_MAP[exe]=installers
+FOLDER_MAP[msi]=installers FOLDER_MAP[deb]=installers FOLDER_MAP[rpm]=installers
+# Fonts
+FOLDER_MAP[ttf]=fonts FOLDER_MAP[otf]=fonts FOLDER_MAP[woff]=fonts FOLDER_MAP[woff2]=fonts
+# Design
+FOLDER_MAP[psd]=design FOLDER_MAP[ai]=design FOLDER_MAP[sketch]=design FOLDER_MAP[fig]=design
+FOLDER_MAP[xd]=design FOLDER_MAP[indd]=design
+# Data
+FOLDER_MAP[sqlite]=data FOLDER_MAP[db]=data FOLDER_MAP[dbf]=data
+# Ebooks
+FOLDER_MAP[epub]=ebooks FOLDER_MAP[mobi]=ebooks FOLDER_MAP[azw3]=ebooks
+# Logs
+FOLDER_MAP[log]=logs
+
+# All category folder names
+CATEGORY_FOLDERS=(images docsspreadsheets presentations archives audio video code installers fonts design data ebooks logs other)
+
+# Lookup set for fast category checking
+typeset -A IS_CATEGORY
+for cat in "${CATEGORY_FOLDERS[@]}"; do
+  IS_CATEGORY[$cat]=1
+done
+
+moved=0
+
+organize_dir() {
+  local dir="$1"
+  local short_dir="$(basename "$dir")"
+
+  # Idempotency: skip if this dir IS a category folder
+  if [[ -n "${IS_CATEGORY[$short_dir]}" ]] && [[ "$dir" != "$TARGET" ]]; then
+    return
+  fi
+
+  local dir_moved=0
+
+  for file in "$dir"/*; do
+    [[ ! -e "$file" ]] && continue
+    [[ -d "$file" ]] && continue
+
+    local fname="$(basename "$file")"
+    [[ "$fname" == .* ]] && continue
+    [[ "$fname" == *.crdownload ]] && continue
+    [[ "$fname" == *.part ]] && continue
+
+    local ext="${fname##*.}"
+    ext="${ext:l}"
+
+    # Skip files with no extension
+    [[ "$fname" == "$ext" ]] && continue
+
+    local folder="${FOLDER_MAP[$ext]}"
+    [[ -z "$folder" ]] && folder="other"
+
+    # Idempotency: skip if already in the correct category folder
+    if [[ "$short_dir" == "$folder" ]]; then
+      continue
+    fi
+
+    local dest="$dir/$folder"
+
+    # Handle name collisions
+    local dest_file="$dest/$fname"
+    if [[ -e "$dest_file" ]]; then
+      local base="${fname%.*}"
+      local counter=1
+      while [[ -e "$dest/${base}_${counter}.${ext}" ]]; do
+        ((counter++))
+      done
+      dest_file="$dest/${base}_${counter}.${ext}"
+    fi
+
+    if $DRY_RUN; then
+      echo "  $fname  ->  $folder/"
+    else
+      mkdir -p "$dest"
+      mv "$file" "$dest_file"
+    fi
+    ((moved++))
+    ((dir_moved++))
+  done
+
+  if [[ $dir_moved -gt 0 ]] && $DRY_RUN; then
+    echo "  ($dir_moved files)"
+    echo ""
+  fi
+}
+
+# Collect existing subdirectories (before creating category folders)
+existing_dirs=()
+for entry in "$TARGET"/*/; do
+  [[ ! -d "$entry" ]] && continue
+  local dirname="$(basename "$entry")"
+  [[ "$dirname" == .* ]] && continue
+  [[ -n "${IS_CATEGORY[$dirname]}" ]] && continue
+  existing_dirs+=("$entry")
+done
+
+# Organize target root
+if $DRY_RUN; then echo "[ $(basename "$TARGET") ]"; fi
+organize_dir "$TARGET"
+
+# Organize each existing subdirectory
+for subdir in "${existing_dirs[@]}"; do
+  local dirname="$(basename "$subdir")"
+  if $DRY_RUN; then echo "[ $(basename "$TARGET")/$dirname ]"; fi
+  organize_dir "$subdir"
+done
+
+echo ""
+if $DRY_RUN; then
+  echo "Total: $moved files would be moved."
+else
+  echo "Done. $moved files moved."
+fi

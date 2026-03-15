@@ -1,0 +1,129 @@
+#!/bin/zsh
+setopt nullglob
+
+# Builds an HTML preview from organize-folder --dry-run output.
+# Used by the macOS app. Can also be opened manually.
+#
+# Usage: organize-preview /path/to/folder
+# Output: /tmp/organize-preview.html
+# Stdout: total file count (for the app to read)
+
+SCRIPT_DIR="${0:A:h}"
+FOLDER="$1"
+RAW="/tmp/organize-raw.txt"
+OUT="/tmp/organize-preview.html"
+
+if [[ -z "$FOLDER" ]]; then
+  echo "Usage: organize-preview /path/to/folder"
+  exit 1
+fi
+
+"$SCRIPT_DIR/organize-folder" "$FOLDER" --dry-run > "$RAW" 2>&1
+
+# Count per category
+typeset -A counts
+while IFS= read -r line; do
+  if [[ "$line" == *" -> "* ]]; then
+    cat="${line##*-> }"
+    cat="${cat%/}"
+    counts[$cat]=$(( ${counts[$cat]:-0} + 1 ))
+  fi
+done < "$RAW"
+
+total=0
+for c in ${(k)counts}; do total=$(( total + counts[$c] )); done
+
+# --- Build HTML ---
+cat > "$OUT" << 'HTMLHEAD'
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Organize Folder — Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1e1e2e; color: #cdd6f4;
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    padding: 32px 32px 64px; max-width: 720px; margin: 0 auto;
+  }
+  h1 { font-size: 22px; color: #89b4fa; margin-bottom: 4px; }
+  .path { font-size: 13px; color: #6c7086; margin-bottom: 24px; word-break: break-all; }
+  .summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .badge {
+    background: #313244; border-radius: 8px; padding: 8px 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .badge-count { font-size: 20px; font-weight: 700; color: #a6e3a1; }
+  .badge-label { font-size: 13px; color: #a6adc8; }
+  .total { font-size: 15px; color: #a6e3a1; font-weight: 600; margin-bottom: 28px; }
+  .section { margin-bottom: 20px; }
+  .section-title {
+    font-size: 14px; font-weight: 600; color: #89b4fa;
+    margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #313244;
+  }
+  .file-row {
+    display: flex; justify-content: space-between;
+    padding: 4px 8px; font-size: 13px; border-radius: 4px;
+  }
+  .file-row:nth-child(even) { background: #181825; }
+  .file-row:hover { background: #313244; }
+  .fname {
+    color: #cdd6f4; flex: 1; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; padding-right: 12px;
+  }
+  .fcat { color: #fab387; white-space: nowrap; font-size: 12px; }
+  .note {
+    margin-top: 40px; text-align: center; font-size: 12px; color: #585b70;
+  }
+</style>
+</head>
+<body>
+HTMLHEAD
+
+echo "<h1>Organize Folder</h1>" >> "$OUT"
+echo "<p class=\"path\">$FOLDER</p>" >> "$OUT"
+echo '<div class="summary">' >> "$OUT"
+
+# Badges sorted by count descending
+for cat in ${(kOn)counts}; do
+  echo "<div class=\"badge\"><span class=\"badge-count\">${counts[$cat]}</span><span class=\"badge-label\">${cat## }</span></div>" >> "$OUT"
+done
+
+echo '</div>' >> "$OUT"
+echo "<p class=\"total\">$total files will be organized</p>" >> "$OUT"
+
+# File lists grouped by section
+current_section=""
+while IFS= read -r line; do
+  if [[ "$line" == \[* ]]; then
+    section="${line#\[ }"
+    section="${section% \]}"
+    if [[ -n "$current_section" ]]; then
+      echo "</div>" >> "$OUT"
+    fi
+    echo "<div class=\"section\"><div class=\"section-title\">$section</div>" >> "$OUT"
+    current_section="$section"
+  elif [[ "$line" == *" -> "* ]]; then
+    fname="${line%% ->*}"
+    fname="${fname## }"
+    fcat="${line##*-> }"
+    # Escape HTML
+    fname="${fname//&/&amp;}"
+    fname="${fname//</&lt;}"
+    fname="${fname//>/&gt;}"
+    echo "<div class=\"file-row\"><span class=\"fname\">$fname</span><span class=\"fcat\">$fcat</span></div>" >> "$OUT"
+  fi
+done < "$RAW"
+
+if [[ -n "$current_section" ]]; then
+  echo "</div>" >> "$OUT"
+fi
+
+cat >> "$OUT" << 'HTMLFOOT'
+<p class="note">Close this tab after reviewing. Confirm in the dialog behind this window.</p>
+</body>
+</html>
+HTMLFOOT
+
+echo "$total"
