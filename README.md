@@ -3,6 +3,7 @@
 A macOS utility that sorts messy folders by file extension into clean, categorized subfolders — with a visual preview before anything moves.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/anjanj)
 
 <!-- ![Preview](screenshots/preview.png) -->
 
