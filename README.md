@@ -122,6 +122,8 @@ Issues and PRs welcome. If you have ideas for new categories, better extension m
 
 ---
 
+**Made with ❤️ by [Anjan](https://anjan.dev)**
+
 If this tool saved you time, consider buying me a coffee:
 
 <a href="https://www.buymeacoffee.com/anjanj" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="200"></a>
